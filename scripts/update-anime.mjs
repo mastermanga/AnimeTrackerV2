@@ -198,6 +198,7 @@ function extractDispoFromHtml(html) {
 
   const select = $("#selectEpisodes");
   console.log(`[DEBUG] #selectEpisodes trouvé: ${select.length > 0}`);
+  console.log(`[DEBUG] HTML du select: ${$.html(select)}`);
 
   const options = $("#selectEpisodes option");
   console.log(`[DEBUG] nombre d'options trouvées: ${options.length}`);
@@ -209,30 +210,43 @@ function extractDispoFromHtml(html) {
     console.log(`[DEBUG] option ${index + 1}: "${text}"`);
 
     const match = text.match(/episode\s*(\d+)/i);
-
     if (match) {
       const n = parseInt(match[1], 10);
-      console.log(`[DEBUG] épisode détecté: ${n}`);
-
       if (!Number.isNaN(n) && n > 0) {
         episodes.push(n);
       }
-    } else {
-      console.log(`[DEBUG] aucun numéro détecté dans: "${text}"`);
     }
   });
 
-  console.log(`[DEBUG] épisodes extraits: ${JSON.stringify(episodes)}`);
-
-  if (episodes.length === 0) {
-    console.log("[DEBUG] aucun épisode trouvé, retour vide");
-    return "";
+  if (episodes.length > 0) {
+    const maxEpisode = Math.max(...episodes);
+    console.log(`[DEBUG] dispo via options: ${maxEpisode}`);
+    return maxEpisode;
   }
 
-  const maxEpisode = Math.max(...episodes);
-  console.log(`[DEBUG] dispo final retenu: ${maxEpisode}`);
+  const scripts = $("script")
+    .map((_, el) => $(el).html() || "")
+    .get();
 
-  return maxEpisode;
+  console.log(`[DEBUG] nombre de scripts trouvés: ${scripts.length}`);
+
+  for (let i = 0; i < scripts.length; i++) {
+    const script = scripts[i];
+
+    if (
+      script.includes("selectEpisodes") ||
+      script.includes("Episode") ||
+      script.includes("episodes") ||
+      script.includes("episode")
+    ) {
+      console.log(`\n[DEBUG] SCRIPT ${i + 1} POSSIBLEMENT UTILE:\n`);
+      console.log(script.slice(0, 3000));
+      console.log("\n[DEBUG] FIN SCRIPT\n");
+    }
+  }
+
+  console.log("[DEBUG] aucun épisode trouvé, retour vide");
+  return "";
 }
 
 async function getAnimeSamaData(title, saison, existingSlug) {
