@@ -4,7 +4,11 @@ on:
   workflow_dispatch:
 
   schedule:
-    - cron: "7,37 9-19 * * *"
+    - cron: "*/10 5-20 * * *"
+
+concurrency:
+  group: anime-update
+  cancel-in-progress: true
 
 jobs:
   update:
