@@ -52,12 +52,10 @@ h1 {
   background-color: #161e27ef;
   border-radius: 20px;
   padding: 2rem;
-  width: 100%;
-  max-width: 1200px;
+  width: 95%;
+  max-width: 1800px; /* évite que ça devienne énorme sur ultrawide */
   box-shadow: 0 0 32px 5px #00bcd444;
   margin: 0 auto;
-  position: relative;
-  z-index: 2;
 }
 
 #anime-list {
