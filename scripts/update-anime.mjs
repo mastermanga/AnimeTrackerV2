@@ -1,7 +1,8 @@
 import { google } from "googleapis";
 import * as cheerio from "cheerio";
 
-const SHEET_ID = process.env.SHEET_ID || "1WuGg-AH0X1x5ZdOswZlwn5KxE-V0TKeYTxovN20E9UE";
+const SHEET_ID =
+  process.env.SHEET_ID || "1WuGg-AH0X1x5ZdOswZlwn5KxE-V0TKeYTxovN20E9UE";
 const SHEET_NAME = process.env.SHEET_NAME || "Anime";
 const GOOGLE_SERVICE_ACCOUNT_JSON = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
 
@@ -17,21 +18,21 @@ const auth = new google.auth.GoogleAuth({
 const sheets = google.sheets({ version: "v4", auth });
 
 const COL = {
-  TITRE: 0,      // A
-  SAISON: 1,     // B
-  VUS: 2,        // C
-  DISPO: 3,      // D
-  NB_EP: 4,      // E
-  ID_MAL: 5,     // F
-  SLUG: 6,       // G
-  IMAGE: 7,      // H
+  TITRE: 0,
+  SAISON: 1,
+  VUS: 2,
+  DISPO: 3,
+  NB_EP: 4,
+  ID_MAL: 5,
+  SLUG: 6,
+  IMAGE: 7,
 };
 
 async function fetchJson(url) {
   const res = await fetch(url, {
     headers: {
-      "User-Agent": "anime-tracker-updater/1.0"
-    }
+      "User-Agent": "anime-tracker-updater/1.0",
+    },
   });
 
   if (!res.ok) {
@@ -44,8 +45,8 @@ async function fetchJson(url) {
 async function fetchText(url) {
   const res = await fetch(url, {
     headers: {
-      "User-Agent": "Mozilla/5.0 anime-tracker-updater/1.0"
-    }
+      "User-Agent": "Mozilla/5.0 anime-tracker-updater/1.0",
+    },
   });
 
   if (!res.ok) {
@@ -60,9 +61,7 @@ function sleep(ms) {
 }
 
 function normalizeTitle(title) {
-  return String(title || "")
-    .replace(/\s+/g, " ")
-    .trim();
+  return String(title || "").replace(/\s+/g, " ").trim();
 }
 
 function inferSeasonFromTitle(title) {
@@ -171,17 +170,18 @@ async function resolveAnimeSamaSlug(existingSlug, title, saison) {
       const html = await fetchText(url);
       if (html && html.length > 1000) return existingSlug;
     } catch {
-      // continue
+      // ignore
     }
   }
 
   const candidate = slugifyForAnimeSama(title);
+
   try {
     const url = buildAnimeSamaUrl(candidate, saison);
     const html = await fetchText(url);
     if (html && html.length > 1000) return candidate;
   } catch {
-    // continue
+    // ignore
   }
 
   return existingSlug || candidate;
@@ -189,44 +189,25 @@ async function resolveAnimeSamaSlug(existingSlug, title, saison) {
 
 function extractDispoFromHtml(html) {
   const $ = cheerio.load(html);
+  const episodes = [];
 
-  const numericOptions = [];
-  $("select option").each((_, el) => {
-    const txt = $(el).text().trim();
-    const match = txt.match(/\b(\d{1,4})\b/);
-    if (match) numericOptions.push(parseInt(match[1], 10));
-  });
+  $("#selectEpisodes option").each((_, el) => {
+    const text = $(el).text().trim();
+    const match = text.match(/episode\s*(\d+)/i);
 
-  if (numericOptions.length) {
-    return Math.max(...numericOptions);
-  }
-
-  const scriptText = $("script")
-    .map((_, el) => $(el).html() || "")
-    .get()
-    .join("\n");
-
-  const allEpisodeNumbers = [];
-
-  for (const regex of [
-    /episode[^0-9]{0,20}(\d{1,4})/gi,
-    /ep[^0-9]{0,20}(\d{1,4})/gi,
-    /["'`](\d{1,4})["'`]/g,
-  ]) {
-    let match;
-    while ((match = regex.exec(scriptText)) !== null) {
+    if (match) {
       const n = parseInt(match[1], 10);
-      if (!Number.isNaN(n) && n > 0 && n < 5000) {
-        allEpisodeNumbers.push(n);
+      if (!Number.isNaN(n) && n > 0) {
+        episodes.push(n);
       }
     }
+  });
+
+  if (episodes.length === 0) {
+    return "";
   }
 
-  if (allEpisodeNumbers.length) {
-    return Math.max(...allEpisodeNumbers);
-  }
-
-  return "";
+  return Math.max(...episodes);
 }
 
 async function getAnimeSamaData(title, saison, existingSlug) {
@@ -293,9 +274,10 @@ async function main() {
     if (!titre) continue;
 
     const saisonCell = parseInt(row[COL.SAISON], 10);
-    const saison = Number.isNaN(saisonCell) || saisonCell <= 0
-      ? inferSeasonFromTitle(titre)
-      : saisonCell;
+    const saison =
+      Number.isNaN(saisonCell) || saisonCell <= 0
+        ? inferSeasonFromTitle(titre)
+        : saisonCell;
 
     const vus = row[COL.VUS];
     const oldDispo = row[COL.DISPO];
@@ -327,33 +309,25 @@ async function main() {
     await sleep(1000);
 
     try {
-      animeSamaData = await getAnimeSamaData(
-        titre,
-        saison,
-        oldSlug
-      );
+      animeSamaData = await getAnimeSamaData(titre, saison, oldSlug);
     } catch (error) {
       console.warn(`  Anime-Sama error: ${error.message}`);
     }
 
     const newRow = [...row];
 
-    newRow[COL.TITRE] = titre; // on garde ton titre actuel comme clé stable
+    newRow[COL.TITRE] = titre;
     newRow[COL.SAISON] = saison;
-    newRow[COL.VUS] = vus; // on n’y touche jamais
+    newRow[COL.VUS] = vus;
     newRow[COL.DISPO] =
       animeSamaData.dispo !== "" ? animeSamaData.dispo : oldDispo;
     newRow[COL.NB_EP] =
       malData.nbEpisode !== "" ? malData.nbEpisode : oldNbEpisode;
-    newRow[COL.ID_MAL] =
-      malData.malId !== "" ? malData.malId : oldMalId;
-    newRow[COL.SLUG] =
-      animeSamaData.slug || oldSlug;
-    newRow[COL.IMAGE] =
-      malData.image || oldImage;
+    newRow[COL.ID_MAL] = malData.malId !== "" ? malData.malId : oldMalId;
+    newRow[COL.SLUG] = animeSamaData.slug || oldSlug;
+    newRow[COL.IMAGE] = malData.image || oldImage;
 
-    const changed =
-      JSON.stringify(newRow) !== JSON.stringify(row);
+    const changed = JSON.stringify(newRow) !== JSON.stringify(row);
 
     if (!changed) {
       console.log("  No change.");
