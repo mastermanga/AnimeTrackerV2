@@ -195,8 +195,8 @@ async function resolveAnimeSamaSlug(existingSlug, title, saison) {
 
 function extractSeasonEpisode(text) {
   const normalized = normalizeTitle(text);
-
   const match = normalized.match(/saison\s*(\d+)\s*episode\s*(\d+)/i);
+
   if (!match) return null;
 
   const saison = parseInt(match[1], 10);
@@ -209,7 +209,6 @@ function extractSeasonEpisode(text) {
 
 function extractSlugFromHref(href) {
   if (!href) return "";
-
   const match = href.match(/\/catalogue\/([^/]+)\//i);
   return match ? match[1].trim() : "";
 }
@@ -223,19 +222,37 @@ function extractRecentEpisodesFromHtml(html) {
   console.log(`[DEBUG] liens catalogue trouvés: ${links.length}`);
 
   links.each((index, el) => {
-    const href = ($(el).attr("href") || "").trim();
+    const link = $(el);
+    const href = (link.attr("href") || "").trim();
     const slug = extractSlugFromHref(href);
-    const text = normalizeTitle($(el).text());
+    const text = normalizeTitle(link.text());
 
     if (!slug) return;
 
-    const parsed = extractSeasonEpisode(text);
+    const card = link.closest("div, article, li");
+
+    let languageTitle =
+      card.find('.language-badge-top img[title]').first().attr("title") ||
+      link.find('.language-badge-top img[title]').first().attr("title") ||
+      card.find('img[title="VOSTFR"], img[title="VF"]').first().attr("title") ||
+      "";
+
+    languageTitle = String(languageTitle).trim().toUpperCase();
 
     console.log(
-      `[DEBUG] lien ${index + 1}: slug="${slug}" href="${href}" text="${text}"`
+      `[DEBUG] lien ${index + 1}: slug="${slug}" href="${href}" text="${text}" langue="${languageTitle}"`
     );
 
-    if (!parsed) return;
+    if (languageTitle !== "VOSTFR") {
+      console.log(`[DEBUG] ignoré car langue != VOSTFR: ${href}`);
+      return;
+    }
+
+    const parsed = extractSeasonEpisode(text);
+    if (!parsed) {
+      console.log(`[DEBUG] ignoré car saison/episode non trouvés: "${text}"`);
+      return;
+    }
 
     const key = `${slug}__${parsed.saison}`;
     if (seen.has(key)) return;
@@ -247,13 +264,14 @@ function extractRecentEpisodesFromHtml(html) {
       episode: parsed.episode,
       href,
       text,
+      language: languageTitle,
     });
   });
 
-  console.log(`[DEBUG] entrées récentes extraites: ${results.length}`);
+  console.log(`[DEBUG] entrées récentes VOSTFR extraites: ${results.length}`);
   results.forEach((item, i) => {
     console.log(
-      `[DEBUG] récent ${i + 1}: slug=${item.slug}, saison=${item.saison}, episode=${item.episode}`
+      `[DEBUG] récent ${i + 1}: slug=${item.slug}, saison=${item.saison}, episode=${item.episode}, langue=${item.language}`
     );
   });
 
@@ -279,12 +297,10 @@ async function getRecentEpisodesMap() {
     }
   }
 
-  console.log(`[DEBUG] taille map épisodes récents: ${map.size}`);
+  console.log(`[DEBUG] taille map épisodes récents VOSTFR: ${map.size}`);
 
   for (const [key, value] of map.entries()) {
-    console.log(
-      `[DEBUG] map récent: ${key} -> episode ${value.episode}`
-    );
+    console.log(`[DEBUG] map récent: ${key} -> episode ${value.episode}`);
   }
 
   return map;
@@ -329,7 +345,9 @@ async function main() {
   try {
     recentEpisodesMap = await getRecentEpisodesMap();
   } catch (error) {
-    console.warn(`[DEBUG] erreur récupération récents Anime-Sama: ${error.message}`);
+    console.warn(
+      `[DEBUG] erreur récupération récents Anime-Sama: ${error.message}`
+    );
   }
 
   for (let i = 0; i < rows.length; i++) {
@@ -380,13 +398,13 @@ async function main() {
     const recentEntry = recentEpisodesMap.get(recentKey);
 
     console.log(
-      `[DEBUG] recherche récent avec key="${recentKey}" -> ${recentEntry ? `episode ${recentEntry.episode}` : "non trouvé"}`
+      `[DEBUG] recherche récent VOSTFR avec key="${recentKey}" -> ${
+        recentEntry ? `episode ${recentEntry.episode}` : "non trouvé"
+      }`
     );
 
     const newDispo =
-      recentEntry && recentEntry.episode
-        ? recentEntry.episode
-        : oldDispo;
+      recentEntry && recentEntry.episode ? recentEntry.episode : oldDispo;
 
     const newRow = [...row];
 
