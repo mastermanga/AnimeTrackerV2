@@ -1,0 +1,13 @@
+.anime-card img {
+  border-radius: 0.75rem;
+}
+
+.anime-card a,
+.anime-card button {
+  margin-top: 0.5rem;
+}
+
+.success-message,
+.error-message {
+  font-weight: 500;
+}
