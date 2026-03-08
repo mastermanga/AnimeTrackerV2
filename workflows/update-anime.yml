@@ -1,9 +1,10 @@
-name: Update Anime Sheet
+name: Update Anime Tracker
 
 on:
   workflow_dispatch:
+
   schedule:
-    - cron: "17 */6 * * *"
+    - cron: "7,37 9-19 * * *"
 
 jobs:
   update:
@@ -18,7 +19,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
