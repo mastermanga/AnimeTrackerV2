@@ -1,0 +1,30 @@
+name: Update Anime Sheet
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 */6 * * *"
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+
+    env:
+      SHEET_ID: 1WuGg-AH0X1x5ZdOswZlwn5KxE-V0TKeYTxovN20E9UE
+      SHEET_NAME: Anime
+      GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.AnimeTrackerSecretAccountJsonGoogleService }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run updater
+        run: node scripts/update-anime.mjs
