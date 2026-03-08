@@ -55,9 +55,11 @@ function displayAnime(data) {
     card.className =
       "bg-gray-800 rounded-2xl shadow-md p-4 flex flex-col md:flex-row items-start space-x-4 anime-card";
 
+    card.setAttribute("data-titre", anime.titre);
     card.setAttribute("data-slug", anime.slug);
     card.setAttribute("data-saison", anime.saison);
     card.setAttribute("data-episodes-dispo", anime.episodes_dispo);
+    card.setAttribute("data-episodes-vus", anime.episodes_vus);
 
     card.innerHTML = `
       <div class="flex-shrink-0">
@@ -83,12 +85,11 @@ function displayAnime(data) {
           rel="noopener"
           class="watch-link w-48 text-center text-white px-4 py-2 rounded-xl transition ${
             aVoir === 0
-              ? "cursor-not-allowed bg-gray-600"
+              ? "bg-gray-600"
               : "bg-blue-500 hover:bg-blue-600"
           }"
-          ${aVoir === 0 ? 'onclick="return false;"' : ""}
         >
-          ${aVoir === 0 ? "À jour" : "Ouvrir sur Anime-Sama"}
+          ${aVoir === 0 ? "À jour sur Anime-Sama" : "Ouvrir sur Anime-Sama"}
         </a>
 
         <button
@@ -126,7 +127,7 @@ function updateEpisodes(titre, episodes_vus, button) {
   const newEpisodesVus = episodes_vus + 1;
 
   const url = `${updateUrl}?${new URLSearchParams({
-    titre,
+    titre: titre,
     episodes_vus: newEpisodesVus,
     cache_buster: Date.now(),
   })}`;
@@ -163,7 +164,7 @@ function updateAnimeInList(titre, newEpisodesVus) {
   const animeCards = animeList.getElementsByClassName("anime-card");
 
   for (const card of animeCards) {
-    const animeTitle = card.querySelector("h2").textContent;
+    const animeTitle = card.getAttribute("data-titre");
 
     if (animeTitle === titre) {
       const episodesVusElement = card.querySelector(".episodes-vus");
@@ -171,23 +172,30 @@ function updateAnimeInList(titre, newEpisodesVus) {
       const lienElement = card.querySelector(".watch-link");
       const buttonValider = card.querySelector(".validate-btn");
 
-      const episodes_vus = newEpisodesVus;
       const episodes_dispo =
         parseInt(card.getAttribute("data-episodes-dispo"), 10) || 0;
       const saison = parseInt(card.getAttribute("data-saison"), 10) || 1;
       const slug = card.getAttribute("data-slug") || "";
-      const aVoir = episodes_dispo - episodes_vus;
+      const aVoir = episodes_dispo - newEpisodesVus;
       const lien = buildAnimeSamaLink(slug, saison);
 
-      episodesVusElement.textContent = `✔️ Visionnés ✔️: ${episodes_vus}`;
+      card.setAttribute("data-episodes-vus", newEpisodesVus);
+
+      episodesVusElement.textContent = `✔️ Visionnés ✔️: ${newEpisodesVus}`;
       aVoirElement.textContent = `🔥 À voir 🔥: ${aVoir} épisode${Math.abs(aVoir) > 1 ? "s" : ""}`;
 
       lienElement.href = lien;
-      lienElement.textContent = aVoir === 0 ? "À jour" : "Ouvrir sur Anime-Sama";
-      lienElement.classList.toggle("cursor-not-allowed", aVoir === 0);
-      lienElement.classList.toggle("bg-gray-600", aVoir === 0);
-      lienElement.classList.toggle("bg-blue-500", aVoir !== 0);
-      lienElement.classList.toggle("hover:bg-blue-600", aVoir !== 0);
+      lienElement.textContent =
+        aVoir === 0 ? "À jour sur Anime-Sama" : "Ouvrir sur Anime-Sama";
+      lienElement.classList.remove(
+        "bg-blue-500",
+        "hover:bg-blue-600",
+        "bg-gray-600"
+      );
+      lienElement.classList.add(aVoir === 0 ? "bg-gray-600" : "bg-blue-500");
+      if (aVoir !== 0) {
+        lienElement.classList.add("hover:bg-blue-600");
+      }
 
       if (aVoir === 0) {
         buttonValider.disabled = true;
@@ -206,7 +214,7 @@ function updateAnimeInList(titre, newEpisodesVus) {
 
       if (!newButton.disabled) {
         newButton.addEventListener("click", () => {
-          updateEpisodes(titre, episodes_vus, newButton);
+          updateEpisodes(titre, newEpisodesVus, newButton);
         });
       }
 
