@@ -3,12 +3,10 @@ import * as cheerio from "cheerio";
 
 const SHEET_ID = process.env.SHEET_ID || "1WuGg-AH0X1x5ZdOswZlwn5KxE-V0TKeYTxovN20E9UE";
 const SHEET_NAME = process.env.SHEET_NAME || "Anime";
-const GOOGLE_SERVICE_ACCOUNT_JSON = process.env.AnimeTrackerSecretAccountJsonGoogleService;
+const GOOGLE_SERVICE_ACCOUNT_JSON = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
 
 if (!GOOGLE_SERVICE_ACCOUNT_JSON) {
-  throw new Error(
-    "Missing AnimeTrackerSecretAccountJsonGoogleService environment variable."
-  );
+  throw new Error("Missing GOOGLE_SERVICE_ACCOUNT_JSON environment variable.");
 }
 
 const auth = new google.auth.GoogleAuth({
