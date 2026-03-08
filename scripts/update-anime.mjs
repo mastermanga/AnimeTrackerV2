@@ -96,6 +96,20 @@ function stripSeasonFromTitle(title) {
     .trim();
 }
 
+function slugifyForAnimeSama(title) {
+  return stripSeasonFromTitle(title)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/['’]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function buildAnimeSamaUrl(slug, saison) {
+  return `https://anime-sama.to/catalogue/${slug}/saison${saison}/vostfr/`;
+}
+
 async function searchMalByTitle(title) {
   const q = encodeURIComponent(title);
   const url = `https://api.jikan.moe/v4/anime?q=${q}&limit=5`;
@@ -149,20 +163,6 @@ async function getMalData(rowTitle) {
   };
 }
 
-function buildAnimeSamaUrl(slug, saison) {
-  return `https://anime-sama.to/catalogue/${slug}/saison${saison}/vostfr/`;
-}
-
-function slugifyForAnimeSama(title) {
-  return stripSeasonFromTitle(title)
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/['’]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
 async function resolveAnimeSamaSlug(existingSlug, title, saison) {
   if (existingSlug) {
     try {
@@ -193,95 +193,101 @@ async function resolveAnimeSamaSlug(existingSlug, title, saison) {
   return existingSlug || candidate;
 }
 
-function extractDispoFromHtml(html) {
-  const $ = cheerio.load(html);
+function extractSeasonEpisode(text) {
+  const normalized = normalizeTitle(text);
 
-  const select = $("#selectEpisodes");
-  console.log(`[DEBUG] #selectEpisodes trouvé: ${select.length > 0}`);
-  console.log(`[DEBUG] HTML du select: ${$.html(select)}`);
+  const match = normalized.match(/saison\s*(\d+)\s*episode\s*(\d+)/i);
+  if (!match) return null;
 
-  const options = $("#selectEpisodes option");
-  console.log(`[DEBUG] nombre d'options trouvées: ${options.length}`);
+  const saison = parseInt(match[1], 10);
+  const episode = parseInt(match[2], 10);
 
-  const episodes = [];
+  if (Number.isNaN(saison) || Number.isNaN(episode)) return null;
 
-  options.each((index, el) => {
-    const text = $(el).text().trim();
-    console.log(`[DEBUG] option ${index + 1}: "${text}"`);
-
-    const match = text.match(/episode\s*(\d+)/i);
-    if (match) {
-      const n = parseInt(match[1], 10);
-      if (!Number.isNaN(n) && n > 0) {
-        episodes.push(n);
-      }
-    }
-  });
-
-  if (episodes.length > 0) {
-    const maxEpisode = Math.max(...episodes);
-    console.log(`[DEBUG] dispo via options: ${maxEpisode}`);
-    return maxEpisode;
-  }
-
-  const scripts = $("script")
-    .map((_, el) => $(el).html() || "")
-    .get();
-
-  console.log(`[DEBUG] nombre de scripts trouvés: ${scripts.length}`);
-
-  for (let i = 0; i < scripts.length; i++) {
-    const script = scripts[i];
-
-    if (
-      script.includes("selectEpisodes") ||
-      script.includes("Episode") ||
-      script.includes("episodes") ||
-      script.includes("episode")
-    ) {
-      console.log(`\n[DEBUG] SCRIPT ${i + 1} POSSIBLEMENT UTILE:\n`);
-      console.log(script.slice(0, 3000));
-      console.log("\n[DEBUG] FIN SCRIPT\n");
-    }
-  }
-
-  console.log("[DEBUG] aucun épisode trouvé, retour vide");
-  return "";
+  return { saison, episode };
 }
 
-async function getAnimeSamaData(title, saison, existingSlug) {
-  const slug = await resolveAnimeSamaSlug(existingSlug, title, saison);
+function extractSlugFromHref(href) {
+  if (!href) return "";
 
-  try {
-    const url = buildAnimeSamaUrl(slug, saison);
-    console.log(`[DEBUG] Anime-Sama URL: ${url}`);
+  const match = href.match(/\/catalogue\/([^/]+)\//i);
+  return match ? match[1].trim() : "";
+}
 
-    const html = await fetchText(url);
-    console.log(`[DEBUG] longueur HTML récupéré: ${html.length}`);
+function extractRecentEpisodesFromHtml(html) {
+  const $ = cheerio.load(html);
+  const results = [];
+  const seen = new Set();
 
-    const dispo = extractDispoFromHtml(html);
+  const links = $('a[href*="/catalogue/"]');
+  console.log(`[DEBUG] liens catalogue trouvés: ${links.length}`);
+
+  links.each((index, el) => {
+    const href = ($(el).attr("href") || "").trim();
+    const slug = extractSlugFromHref(href);
+    const text = normalizeTitle($(el).text());
+
+    if (!slug) return;
+
+    const parsed = extractSeasonEpisode(text);
 
     console.log(
-      `[DEBUG] résultat Anime-Sama pour "${title}" saison ${saison}: slug=${slug}, dispo=${dispo}`
+      `[DEBUG] lien ${index + 1}: slug="${slug}" href="${href}" text="${text}"`
     );
 
-    return {
-      slug,
-      dispo,
-      animeSamaUrl: url,
-    };
-  } catch (error) {
-    console.warn(
-      `[DEBUG] erreur Anime-Sama pour "${title}" saison ${saison}: ${error.message}`
-    );
+    if (!parsed) return;
 
-    return {
+    const key = `${slug}__${parsed.saison}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+
+    results.push({
       slug,
-      dispo: "",
-      animeSamaUrl: buildAnimeSamaUrl(slug, saison),
-      error: error.message,
-    };
+      saison: parsed.saison,
+      episode: parsed.episode,
+      href,
+      text,
+    });
+  });
+
+  console.log(`[DEBUG] entrées récentes extraites: ${results.length}`);
+  results.forEach((item, i) => {
+    console.log(
+      `[DEBUG] récent ${i + 1}: slug=${item.slug}, saison=${item.saison}, episode=${item.episode}`
+    );
+  });
+
+  return results;
+}
+
+async function getRecentEpisodesMap() {
+  const url = "https://anime-sama.to/";
+  console.log(`[DEBUG] récupération homepage Anime-Sama: ${url}`);
+
+  const html = await fetchText(url);
+  console.log(`[DEBUG] longueur homepage HTML: ${html.length}`);
+
+  const recentEntries = extractRecentEpisodesFromHtml(html);
+  const map = new Map();
+
+  for (const entry of recentEntries) {
+    const key = `${entry.slug}__${entry.saison}`;
+    const current = map.get(key);
+
+    if (!current || entry.episode > current.episode) {
+      map.set(key, entry);
+    }
   }
+
+  console.log(`[DEBUG] taille map épisodes récents: ${map.size}`);
+
+  for (const [key, value] of map.entries()) {
+    console.log(
+      `[DEBUG] map récent: ${key} -> episode ${value.episode}`
+    );
+  }
+
+  return map;
 }
 
 async function readSheetRows() {
@@ -313,9 +319,18 @@ async function writeRow(rowIndex, rowValues) {
 }
 
 async function main() {
+  console.log("=== SCRIPT START ===");
   console.log("Reading sheet...");
   const rows = await readSheetRows();
   console.log(`Found ${rows.length} anime rows.`);
+
+  let recentEpisodesMap = new Map();
+
+  try {
+    recentEpisodesMap = await getRecentEpisodesMap();
+  } catch (error) {
+    console.warn(`[DEBUG] erreur récupération récents Anime-Sama: ${error.message}`);
+  }
 
   for (let i = 0; i < rows.length; i++) {
     const rowNumber = i + 2;
@@ -346,11 +361,6 @@ async function main() {
       saison,
     };
 
-    let animeSamaData = {
-      slug: oldSlug,
-      dispo: oldDispo,
-    };
-
     try {
       malData = await getMalData(titre);
     } catch (error) {
@@ -359,23 +369,36 @@ async function main() {
 
     await sleep(1000);
 
+    let finalSlug = oldSlug;
     try {
-      animeSamaData = await getAnimeSamaData(titre, saison, oldSlug);
+      finalSlug = await resolveAnimeSamaSlug(oldSlug, titre, saison);
     } catch (error) {
-      console.warn(`  Anime-Sama error: ${error.message}`);
+      console.warn(`  Anime-Sama slug error: ${error.message}`);
     }
+
+    const recentKey = `${finalSlug}__${saison}`;
+    const recentEntry = recentEpisodesMap.get(recentKey);
+
+    console.log(
+      `[DEBUG] recherche récent avec key="${recentKey}" -> ${recentEntry ? `episode ${recentEntry.episode}` : "non trouvé"}`
+    );
+
+    const newDispo =
+      recentEntry && recentEntry.episode
+        ? recentEntry.episode
+        : oldDispo;
 
     const newRow = [...row];
 
     newRow[COL.TITRE] = titre;
     newRow[COL.SAISON] = saison;
     newRow[COL.VUS] = vus;
-    newRow[COL.DISPO] =
-      animeSamaData.dispo !== "" ? animeSamaData.dispo : oldDispo;
+    newRow[COL.DISPO] = newDispo;
     newRow[COL.NB_EP] =
       malData.nbEpisode !== "" ? malData.nbEpisode : oldNbEpisode;
-    newRow[COL.ID_MAL] = malData.malId !== "" ? malData.malId : oldMalId;
-    newRow[COL.SLUG] = animeSamaData.slug || oldSlug;
+    newRow[COL.ID_MAL] =
+      malData.malId !== "" ? malData.malId : oldMalId;
+    newRow[COL.SLUG] = finalSlug || oldSlug;
     newRow[COL.IMAGE] = malData.image || oldImage;
 
     const changed = JSON.stringify(newRow) !== JSON.stringify(row);
