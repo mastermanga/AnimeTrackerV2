@@ -2,7 +2,7 @@ const sheetUrl =
   "https://docs.google.com/spreadsheets/d/1WuGg-AH0X1x5ZdOswZlwn5KxE-V0TKeYTxovN20E9UE/export?format=csv&gid=15026583";
 
 const updateUrl =
-  "https://script.google.com/macros/s/AKfycbyGVtKO68L9CZR6s2XDWTvav690n2rHPg03UigmeQjVLyRroT7OhaBkPTYcQ3EZU4slbQ/exec";
+  "https://script.google.com/macros/s/AKfycby-V1gcNKBdN7Lt2HqdrwdyzNfdVJO8m_mAeXoGRIWSO0AHBFE0c2ac-bP9krEa_A/exec";
 
 async function loadAnime() {
   try {
