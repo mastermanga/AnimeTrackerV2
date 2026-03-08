@@ -12,24 +12,17 @@ async function loadAnime() {
     const rows = data.trim().split("\n").slice(1);
 
     const animeData = rows.map((row) => {
-      const [
-        titre,
-        episodes_vus,
-        episodes_dispo,
-        nb_episode,
-        ID_MAL,
-        slug,
-        saison,
-        image_url,
-      ] = row.split(",");
+      const [titre, saison, vus, dispo, nb_episode, id_mal, slug, image_url] =
+        row.split(",");
 
       return {
         titre: (titre || "").trim(),
-        slug: (slug || "").trim(),
         saison: parseInt(saison, 10) || 1,
-        episodes_vus: parseInt(episodes_vus, 10) || 0,
-        episodes_dispo: parseInt(episodes_dispo, 10) || 0,
+        episodes_vus: parseInt(vus, 10) || 0,
+        episodes_dispo: parseInt(dispo, 10) || 0,
         nb_episode: (nb_episode || "").trim(),
+        id_mal: (id_mal || "").trim(),
+        slug: (slug || "").trim(),
         image_url: (image_url || "").trim(),
       };
     });
@@ -78,11 +71,11 @@ function displayAnime(data) {
 
       <div class="flex flex-col justify-start">
         <h2 class="text-xl font-semibold mb-2">${escapeHtml(anime.titre)}</h2>
+        <p class="mb-1">📚 Saison 📚: ${anime.saison}</p>
         <p class="mb-1">🎞️ Total d'épisodes 🎞️: ${anime.nb_episode || "?"}</p>
         <p class="mb-1 episodes-vus">✔️ Visionnés ✔️: ${anime.episodes_vus}</p>
         <p class="mb-1">📅 Sortis 📅: ${anime.episodes_dispo}</p>
-        <p class="mb-1">📚 Saison 📚: ${anime.saison}</p>
-        <p class="mb-2 a-voir">🔥 À voir 🔥: ${aVoir} épisode${aVoir > 1 || aVoir < -1 ? "s" : ""}</p>
+        <p class="mb-2 a-voir">🔥 À voir 🔥: ${aVoir} épisode${Math.abs(aVoir) > 1 ? "s" : ""}</p>
 
         <a
           href="${lien}"
@@ -105,8 +98,6 @@ function displayAnime(data) {
               : "bg-green-500 hover:bg-green-600"
           }"
           ${aVoir === 0 ? "disabled" : ""}
-          data-title="${escapeAttribute(anime.titre)}"
-          data-episodes-vus="${anime.episodes_vus}"
         >
           ${aVoir === 0 ? "À jour" : "Valider l’épisode vu"}
         </button>
@@ -181,14 +172,15 @@ function updateAnimeInList(titre, newEpisodesVus) {
       const buttonValider = card.querySelector(".validate-btn");
 
       const episodes_vus = newEpisodesVus;
-      const episodes_dispo = parseInt(card.getAttribute("data-episodes-dispo"), 10) || 0;
+      const episodes_dispo =
+        parseInt(card.getAttribute("data-episodes-dispo"), 10) || 0;
       const saison = parseInt(card.getAttribute("data-saison"), 10) || 1;
       const slug = card.getAttribute("data-slug") || "";
       const aVoir = episodes_dispo - episodes_vus;
       const lien = buildAnimeSamaLink(slug, saison);
 
       episodesVusElement.textContent = `✔️ Visionnés ✔️: ${episodes_vus}`;
-      aVoirElement.textContent = `🔥 À voir 🔥: ${aVoir} épisode${aVoir > 1 || aVoir < -1 ? "s" : ""}`;
+      aVoirElement.textContent = `🔥 À voir 🔥: ${aVoir} épisode${Math.abs(aVoir) > 1 ? "s" : ""}`;
 
       lienElement.href = lien;
       lienElement.textContent = aVoir === 0 ? "À jour" : "Ouvrir sur Anime-Sama";
@@ -207,13 +199,15 @@ function updateAnimeInList(titre, newEpisodesVus) {
         buttonValider.textContent = "Valider l’épisode vu";
         buttonValider.classList.remove("bg-gray-600", "cursor-not-allowed");
         buttonValider.classList.add("bg-green-500", "hover:bg-green-600");
+      }
 
-        buttonValider.onclick = null;
-        buttonValider.addEventListener(
-          "click",
-          () => updateEpisodes(titre, episodes_vus, buttonValider),
-          { once: true }
-        );
+      const newButton = buttonValider.cloneNode(true);
+      buttonValider.replaceWith(newButton);
+
+      if (!newButton.disabled) {
+        newButton.addEventListener("click", () => {
+          updateEpisodes(titre, episodes_vus, newButton);
+        });
       }
 
       break;
@@ -228,10 +222,6 @@ function escapeHtml(str) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
-}
-
-function escapeAttribute(str) {
-  return String(str).replaceAll('"', "&quot;");
 }
 
 loadAnime();
