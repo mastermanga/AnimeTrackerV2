@@ -26,7 +26,6 @@ const COL = {
   ID_MAL: 5,
   SLUG: 6,
   IMAGE: 7,
-  PAYS: 8, // nouvelle colonne I
 };
 
 async function fetchJson(url) {
@@ -63,16 +62,6 @@ function sleep(ms) {
 
 function normalizeTitle(title) {
   return String(title || "").replace(/\s+/g, " ").trim();
-}
-
-function normalizeCountry(value) {
-  const v = String(value || "").trim().toLowerCase();
-
-  if (!v) return "fr";
-  if (["fr", "france", "french"].includes(v)) return "fr";
-  if (["jp", "japan", "japon", "japanese"].includes(v)) return "jp";
-
-  return v;
 }
 
 function inferSeasonFromTitle(title) {
@@ -224,69 +213,16 @@ function extractSlugFromHref(href) {
   return match ? match[1].trim() : "";
 }
 
-function detectCountryFromRaw(raw) {
-  const text = String(raw || "").toLowerCase();
+function extractVersionFromHref(href) {
+  const normalized = String(href || "").trim().toLowerCase();
 
-  if (
-    text.includes("france") ||
-    text.includes("french") ||
-    text.includes("flag-fr") ||
-    text.includes("flag_fr") ||
-    text.includes(" drapeau-fr") ||
-    text.includes("/fr.") ||
-    text.includes("_fr.") ||
-    text.includes("-fr.") ||
-    text.includes(" fr.svg") ||
-    text.includes(" fr.png") ||
-    text.includes(" fr.webp")
-  ) {
-    return "fr";
+  if (normalized.endsWith("/vostfr/") || normalized.endsWith("/vostfr")) {
+    return "vostfr";
   }
 
-  if (
-    text.includes("japan") ||
-    text.includes("japon") ||
-    text.includes("japanese") ||
-    text.includes("flag-jp") ||
-    text.includes("flag_jp") ||
-    text.includes(" drapeau-jp") ||
-    text.includes("/jp.") ||
-    text.includes("_jp.") ||
-    text.includes("-jp.") ||
-    text.includes(" jp.svg") ||
-    text.includes(" jp.png") ||
-    text.includes(" jp.webp")
-  ) {
-    return "jp";
+  if (normalized.endsWith("/vf/") || normalized.endsWith("/vf")) {
+    return "vf";
   }
-
-  return "";
-}
-
-function extractCountryFromCard(card, link) {
-  const elements = [...card.find("img").toArray(), ...link.find("img").toArray()];
-
-  for (const img of elements) {
-    const node = cheerio.load(img).root().children().first();
-
-    const src = String(node.attr("src") || "");
-    const alt = String(node.attr("alt") || "");
-    const title = String(node.attr("title") || "");
-    const className = String(node.attr("class") || "");
-    const dataSrc = String(node.attr("data-src") || "");
-
-    const raw = `${src} ${dataSrc} ${alt} ${title} ${className}`;
-    const country = detectCountryFromRaw(raw);
-
-    if (country) return country;
-  }
-
-  const cardText = normalizeTitle(card.text());
-  const linkText = normalizeTitle(link.text());
-  const fallbackRaw = `${cardText} ${linkText}`;
-  const fallbackCountry = detectCountryFromRaw(fallbackRaw);
-
-  if (fallbackCountry) return fallbackCountry;
 
   return "";
 }
@@ -304,6 +240,7 @@ function extractRecentEpisodesFromHtml(html) {
     const href = (link.attr("href") || "").trim();
     const slug = extractSlugFromHref(href);
     const text = normalizeTitle(link.text());
+    const version = extractVersionFromHref(href);
 
     if (!slug) return;
 
@@ -318,14 +255,12 @@ function extractRecentEpisodesFromHtml(html) {
 
     languageTitle = String(languageTitle).trim().toUpperCase();
 
-    const country = extractCountryFromCard(card, link) || "fr";
-
     console.log(
-      `[DEBUG] lien ${index + 1}: slug="${slug}" href="${href}" text="${text}" langue="${languageTitle}" pays="${country}"`
+      `[DEBUG] lien ${index + 1}: slug="${slug}" href="${href}" text="${text}" langue="${languageTitle}" version="${version}"`
     );
 
-    if (languageTitle !== "VOSTFR") {
-      console.log(`[DEBUG] ignoré car langue != VOSTFR: ${href}`);
+    if (version !== "vostfr") {
+      console.log(`[DEBUG] ignoré car href != /vostfr/: ${href}`);
       return;
     }
 
@@ -335,7 +270,7 @@ function extractRecentEpisodesFromHtml(html) {
       return;
     }
 
-    const key = `${slug}__${parsed.saison}__${country}`;
+    const key = `${slug}__${parsed.saison}__${version}`;
     if (seen.has(key)) return;
     seen.add(key);
 
@@ -346,14 +281,14 @@ function extractRecentEpisodesFromHtml(html) {
       href,
       text,
       language: languageTitle,
-      country,
+      version,
     });
   });
 
-  console.log(`[DEBUG] entrées récentes VOSTFR extraites: ${results.length}`);
+  console.log(`[DEBUG] entrées récentes extraites: ${results.length}`);
   results.forEach((item, i) => {
     console.log(
-      `[DEBUG] récent ${i + 1}: slug=${item.slug}, saison=${item.saison}, episode=${item.episode}, langue=${item.language}, pays=${item.country}`
+      `[DEBUG] récent ${i + 1}: slug=${item.slug}, saison=${item.saison}, episode=${item.episode}, version=${item.version}`
     );
   });
 
@@ -371,7 +306,7 @@ async function getRecentEpisodesMap() {
   const map = new Map();
 
   for (const entry of recentEntries) {
-    const key = `${entry.slug}__${entry.saison}__${entry.country}`;
+    const key = `${entry.slug}__${entry.saison}__${entry.version}`;
     const current = map.get(key);
 
     if (!current || entry.episode > current.episode) {
@@ -379,19 +314,17 @@ async function getRecentEpisodesMap() {
     }
   }
 
-  console.log(`[DEBUG] taille map épisodes récents VOSTFR: ${map.size}`);
+  console.log(`[DEBUG] taille map épisodes récents: ${map.size}`);
 
   for (const [key, value] of map.entries()) {
-    console.log(
-      `[DEBUG] map récent: ${key} -> episode ${value.episode}`
-    );
+    console.log(`[DEBUG] map récent: ${key} -> episode ${value.episode}`);
   }
 
   return map;
 }
 
 async function readSheetRows() {
-  const range = `${SHEET_NAME}!A2:I`;
+  const range = `${SHEET_NAME}!A2:H`;
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
     range,
@@ -402,12 +335,12 @@ async function readSheetRows() {
 
 function padRow(row) {
   const copy = [...row];
-  while (copy.length < 9) copy.push("");
+  while (copy.length < 8) copy.push("");
   return copy;
 }
 
 async function writeRow(rowIndex, rowValues) {
-  const range = `${SHEET_NAME}!A${rowIndex}:I${rowIndex}`;
+  const range = `${SHEET_NAME}!A${rowIndex}:H${rowIndex}`;
   await sheets.spreadsheets.values.update({
     spreadsheetId: SHEET_ID,
     range,
@@ -453,9 +386,8 @@ async function main() {
     const oldMalId = row[COL.ID_MAL];
     const oldSlug = row[COL.SLUG];
     const oldImage = row[COL.IMAGE];
-    const oldCountry = normalizeCountry(row[COL.PAYS] || "fr");
 
-    console.log(`\n[${rowNumber}] ${titre} (saison ${saison}, pays ${oldCountry})`);
+    console.log(`\n[${rowNumber}] ${titre} (saison ${saison})`);
 
     let malData = {
       malId: oldMalId,
@@ -479,11 +411,12 @@ async function main() {
       console.warn(`  Anime-Sama slug error: ${error.message}`);
     }
 
-    const recentKey = `${finalSlug}__${saison}__${oldCountry}`;
+    const preferredVersion = "vostfr";
+    const recentKey = `${finalSlug}__${saison}__${preferredVersion}`;
     const recentEntry = recentEpisodesMap.get(recentKey);
 
     console.log(
-      `[DEBUG] recherche récent VOSTFR avec key="${recentKey}" -> ${
+      `[DEBUG] recherche récent avec key="${recentKey}" -> ${
         recentEntry ? `episode ${recentEntry.episode}` : "non trouvé"
       }`
     );
@@ -503,7 +436,6 @@ async function main() {
       malData.malId !== "" ? malData.malId : oldMalId;
     newRow[COL.SLUG] = finalSlug || oldSlug;
     newRow[COL.IMAGE] = malData.image || oldImage;
-    newRow[COL.PAYS] = oldCountry;
 
     const changed = JSON.stringify(newRow) !== JSON.stringify(row);
 
@@ -518,7 +450,8 @@ async function main() {
     console.log(`  nb_episode: ${oldNbEpisode} -> ${newRow[COL.NB_EP]}`);
     console.log(`  ID_MAL: ${oldMalId} -> ${newRow[COL.ID_MAL]}`);
     console.log(`  Slug: ${oldSlug} -> ${newRow[COL.SLUG]}`);
-    console.log(`  Pays: ${row[COL.PAYS] || ""} -> ${newRow[COL.PAYS]}`);
+
+    await sleep(500);
   }
 
   console.log("\nDone.");
