@@ -26,6 +26,7 @@ const COL = {
   ID_MAL: 5,
   SLUG: 6,
   IMAGE: 7,
+  PAYS: 8, // nouvelle colonne I
 };
 
 async function fetchJson(url) {
@@ -62,6 +63,16 @@ function sleep(ms) {
 
 function normalizeTitle(title) {
   return String(title || "").replace(/\s+/g, " ").trim();
+}
+
+function normalizeCountry(value) {
+  const v = String(value || "").trim().toLowerCase();
+
+  if (!v) return "fr";
+  if (["fr", "france", "french"].includes(v)) return "fr";
+  if (["jp", "japan", "japon", "japanese"].includes(v)) return "jp";
+
+  return v;
 }
 
 function inferSeasonFromTitle(title) {
@@ -213,6 +224,73 @@ function extractSlugFromHref(href) {
   return match ? match[1].trim() : "";
 }
 
+function detectCountryFromRaw(raw) {
+  const text = String(raw || "").toLowerCase();
+
+  if (
+    text.includes("france") ||
+    text.includes("french") ||
+    text.includes("flag-fr") ||
+    text.includes("flag_fr") ||
+    text.includes(" drapeau-fr") ||
+    text.includes("/fr.") ||
+    text.includes("_fr.") ||
+    text.includes("-fr.") ||
+    text.includes(" fr.svg") ||
+    text.includes(" fr.png") ||
+    text.includes(" fr.webp")
+  ) {
+    return "fr";
+  }
+
+  if (
+    text.includes("japan") ||
+    text.includes("japon") ||
+    text.includes("japanese") ||
+    text.includes("flag-jp") ||
+    text.includes("flag_jp") ||
+    text.includes(" drapeau-jp") ||
+    text.includes("/jp.") ||
+    text.includes("_jp.") ||
+    text.includes("-jp.") ||
+    text.includes(" jp.svg") ||
+    text.includes(" jp.png") ||
+    text.includes(" jp.webp")
+  ) {
+    return "jp";
+  }
+
+  return "";
+}
+
+function extractCountryFromCard(card, link) {
+  const elements = [...card.find("img").toArray(), ...link.find("img").toArray()];
+
+  for (const img of elements) {
+    const node = cheerio.load(img).root().children().first();
+
+    const src = String(node.attr("src") || "");
+    const alt = String(node.attr("alt") || "");
+    const title = String(node.attr("title") || "");
+    const className = String(node.attr("class") || "");
+    const dataSrc = String(node.attr("data-src") || "");
+
+    const raw = `${src} ${dataSrc} ${alt} ${title} ${className}`;
+    const country = detectCountryFromRaw(raw);
+
+    if (country) return country;
+  }
+
+  const cardText = normalizeTitle(card.text());
+  const linkText = normalizeTitle(link.text());
+  const fallbackRaw = `${cardText} ${linkText}`;
+  const fallbackCountry = detectCountryFromRaw(fallbackRaw);
+
+  if (fallbackCountry) return fallbackCountry;
+
+  return "";
+}
+
 function extractRecentEpisodesFromHtml(html) {
   const $ = cheerio.load(html);
   const results = [];
@@ -235,12 +313,15 @@ function extractRecentEpisodesFromHtml(html) {
       card.find('.language-badge-top img[title]').first().attr("title") ||
       link.find('.language-badge-top img[title]').first().attr("title") ||
       card.find('img[title="VOSTFR"], img[title="VF"]').first().attr("title") ||
+      link.find('img[title="VOSTFR"], img[title="VF"]').first().attr("title") ||
       "";
 
     languageTitle = String(languageTitle).trim().toUpperCase();
 
+    const country = extractCountryFromCard(card, link) || "fr";
+
     console.log(
-      `[DEBUG] lien ${index + 1}: slug="${slug}" href="${href}" text="${text}" langue="${languageTitle}"`
+      `[DEBUG] lien ${index + 1}: slug="${slug}" href="${href}" text="${text}" langue="${languageTitle}" pays="${country}"`
     );
 
     if (languageTitle !== "VOSTFR") {
@@ -254,7 +335,7 @@ function extractRecentEpisodesFromHtml(html) {
       return;
     }
 
-    const key = `${slug}__${parsed.saison}`;
+    const key = `${slug}__${parsed.saison}__${country}`;
     if (seen.has(key)) return;
     seen.add(key);
 
@@ -265,13 +346,14 @@ function extractRecentEpisodesFromHtml(html) {
       href,
       text,
       language: languageTitle,
+      country,
     });
   });
 
   console.log(`[DEBUG] entrées récentes VOSTFR extraites: ${results.length}`);
   results.forEach((item, i) => {
     console.log(
-      `[DEBUG] récent ${i + 1}: slug=${item.slug}, saison=${item.saison}, episode=${item.episode}, langue=${item.language}`
+      `[DEBUG] récent ${i + 1}: slug=${item.slug}, saison=${item.saison}, episode=${item.episode}, langue=${item.language}, pays=${item.country}`
     );
   });
 
@@ -289,7 +371,7 @@ async function getRecentEpisodesMap() {
   const map = new Map();
 
   for (const entry of recentEntries) {
-    const key = `${entry.slug}__${entry.saison}`;
+    const key = `${entry.slug}__${entry.saison}__${entry.country}`;
     const current = map.get(key);
 
     if (!current || entry.episode > current.episode) {
@@ -300,14 +382,16 @@ async function getRecentEpisodesMap() {
   console.log(`[DEBUG] taille map épisodes récents VOSTFR: ${map.size}`);
 
   for (const [key, value] of map.entries()) {
-    console.log(`[DEBUG] map récent: ${key} -> episode ${value.episode}`);
+    console.log(
+      `[DEBUG] map récent: ${key} -> episode ${value.episode}`
+    );
   }
 
   return map;
 }
 
 async function readSheetRows() {
-  const range = `${SHEET_NAME}!A2:H`;
+  const range = `${SHEET_NAME}!A2:I`;
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
     range,
@@ -318,12 +402,12 @@ async function readSheetRows() {
 
 function padRow(row) {
   const copy = [...row];
-  while (copy.length < 8) copy.push("");
+  while (copy.length < 9) copy.push("");
   return copy;
 }
 
 async function writeRow(rowIndex, rowValues) {
-  const range = `${SHEET_NAME}!A${rowIndex}:H${rowIndex}`;
+  const range = `${SHEET_NAME}!A${rowIndex}:I${rowIndex}`;
   await sheets.spreadsheets.values.update({
     spreadsheetId: SHEET_ID,
     range,
@@ -369,8 +453,9 @@ async function main() {
     const oldMalId = row[COL.ID_MAL];
     const oldSlug = row[COL.SLUG];
     const oldImage = row[COL.IMAGE];
+    const oldCountry = normalizeCountry(row[COL.PAYS] || "fr");
 
-    console.log(`\n[${rowNumber}] ${titre} (saison ${saison})`);
+    console.log(`\n[${rowNumber}] ${titre} (saison ${saison}, pays ${oldCountry})`);
 
     let malData = {
       malId: oldMalId,
@@ -394,7 +479,7 @@ async function main() {
       console.warn(`  Anime-Sama slug error: ${error.message}`);
     }
 
-    const recentKey = `${finalSlug}__${saison}`;
+    const recentKey = `${finalSlug}__${saison}__${oldCountry}`;
     const recentEntry = recentEpisodesMap.get(recentKey);
 
     console.log(
@@ -418,6 +503,7 @@ async function main() {
       malData.malId !== "" ? malData.malId : oldMalId;
     newRow[COL.SLUG] = finalSlug || oldSlug;
     newRow[COL.IMAGE] = malData.image || oldImage;
+    newRow[COL.PAYS] = oldCountry;
 
     const changed = JSON.stringify(newRow) !== JSON.stringify(row);
 
@@ -432,8 +518,7 @@ async function main() {
     console.log(`  nb_episode: ${oldNbEpisode} -> ${newRow[COL.NB_EP]}`);
     console.log(`  ID_MAL: ${oldMalId} -> ${newRow[COL.ID_MAL]}`);
     console.log(`  Slug: ${oldSlug} -> ${newRow[COL.SLUG]}`);
-
-    await sleep(500);
+    console.log(`  Pays: ${row[COL.PAYS] || ""} -> ${newRow[COL.PAYS]}`);
   }
 
   console.log("\nDone.");
