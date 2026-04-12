@@ -1,8 +1,7 @@
 import { google } from "googleapis";
 import * as cheerio from "cheerio";
 
-const SHEET_ID =
-  process.env.SHEET_ID || "1WuGg-AH0X1x5ZdOswZlwn5KxE-V0TKeYTxovN20E9UE";
+const SHEET_ID = process.env.SHEET_ID || "1WuGg-AH0X1x5ZdOswZlwn5KxE-V0TKeYTxovN20E9UE";
 const SHEET_NAME = process.env.SHEET_NAME || "Anime";
 const GOOGLE_SERVICE_ACCOUNT_JSON = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
 
@@ -30,29 +29,17 @@ const COL = {
 
 async function fetchJson(url) {
   const res = await fetch(url, {
-    headers: {
-      "User-Agent": "anime-tracker-updater/1.0",
-    },
+    headers: { "User-Agent": "anime-tracker-updater/1.0" },
   });
-
-  if (!res.ok) {
-    throw new Error(`HTTP ${res.status} on ${url}`);
-  }
-
+  if (!res.ok) throw new Error(`HTTP ${res.status} on ${url}`);
   return res.json();
 }
 
 async function fetchText(url) {
   const res = await fetch(url, {
-    headers: {
-      "User-Agent": "Mozilla/5.0 anime-tracker-updater/1.0",
-    },
+    headers: { "User-Agent": "Mozilla/5.0 anime-tracker-updater/1.0" },
   });
-
-  if (!res.ok) {
-    throw new Error(`HTTP ${res.status} on ${url}`);
-  }
-
+  if (!res.ok) throw new Error(`HTTP ${res.status} on ${url}`);
   return res.text();
 }
 
@@ -64,35 +51,29 @@ function normalizeTitle(title) {
   return String(title || "").replace(/\s+/g, " ").trim();
 }
 
+// MISE À JOUR : Supporte maintenant les formats "4-3", "2-1", etc.
 function inferSeasonFromTitle(title) {
   const t = normalizeTitle(title);
-
   const patterns = [
-    /(?:^|\s)(\d+)(?:nd|rd|th)?\s+season$/i,
-    /(?:^|\s)season\s+(\d+)$/i,
-    /(?:^|\s)saison\s+(\d+)$/i,
-    /(?:^|\s)s(\d+)$/i,
-    /(?:^|\s)(\d+)$/i,
+    /(?:^|\s)saison\s*([\d-]+)/i,
+    /(?:^|\s)season\s*([\d-]+)/i,
+    /(?:^|\s)s([\d-]+)/i,
+    /(?:^|\s)([\d-]+)(?:nd|rd|th)?\s+season/i,
   ];
 
   for (const pattern of patterns) {
     const match = t.match(pattern);
-    if (match) {
-      const n = parseInt(match[1], 10);
-      if (!Number.isNaN(n) && n > 0) return n;
-    }
+    if (match) return match[1];
   }
-
-  return 1;
+  return "1";
 }
 
 function stripSeasonFromTitle(title) {
   return normalizeTitle(title)
-    .replace(/(?:\s+\d+(?:nd|rd|th)?\s+season)$/i, "")
-    .replace(/(?:\s+season\s+\d+)$/i, "")
-    .replace(/(?:\s+saison\s+\d+)$/i, "")
-    .replace(/(?:\s+s\d+)$/i, "")
-    .replace(/(?:\s+\d+)$/i, "")
+    .replace(/(?:\s+[\d-].*?\s+season)$/i, "")
+    .replace(/(?:\s+season\s+[\d-]+)$/i, "")
+    .replace(/(?:\s+saison\s+[\d-]+)$/i, "")
+    .replace(/(?:\s+s[\d-]+)$/i, "")
     .trim();
 }
 
@@ -114,26 +95,19 @@ async function searchMalByTitle(title) {
   const q = encodeURIComponent(title);
   const url = `https://api.jikan.moe/v4/anime?q=${q}&limit=5`;
   const json = await fetchJson(url);
-
   const list = Array.isArray(json.data) ? json.data : [];
   if (!list.length) return null;
 
   const exact = list.find((item) => {
-    const candidates = [
-      item.title,
-      item.title_english,
-      ...(item.title_synonyms || []),
-    ]
+    const candidates = [item.title, item.title_english, ...(item.title_synonyms || [])]
       .filter(Boolean)
       .map(normalizeTitle);
-
     return candidates.includes(normalizeTitle(title));
   });
-
   return exact || list[0];
 }
 
-async function getMalData(rowTitle) {
+async function getMalData(rowTitle, forcedSaison) {
   const fullTitle = normalizeTitle(rowTitle);
   const baseTitle = stripSeasonFromTitle(fullTitle);
 
@@ -146,19 +120,14 @@ async function getMalData(rowTitle) {
   }
 
   if (!anime) {
-    return {
-      malId: "",
-      image: "",
-      nbEpisode: "",
-      saison: inferSeasonFromTitle(fullTitle),
-    };
+    return { malId: "", image: "", nbEpisode: "", saison: forcedSaison };
   }
 
   return {
     malId: anime.mal_id ?? "",
     image: anime.images?.jpg?.image_url ?? "",
     nbEpisode: anime.episodes ?? "",
-    saison: inferSeasonFromTitle(fullTitle),
+    saison: forcedSaison,
     malTitle: anime.title ?? fullTitle,
   };
 }
@@ -168,62 +137,37 @@ async function resolveAnimeSamaSlug(existingSlug, title, saison) {
     try {
       const url = buildAnimeSamaUrl(existingSlug, saison);
       const html = await fetchText(url);
-      if (html && html.length > 1000) {
-        console.log(`[DEBUG] slug existant valide: ${existingSlug}`);
-        return existingSlug;
-      }
-    } catch {
-      console.log(`[DEBUG] slug existant invalide: ${existingSlug}`);
-    }
+      if (html && html.length > 1000) return existingSlug;
+    } catch { /* ignore */ }
   }
 
   const candidate = slugifyForAnimeSama(title);
-
   try {
     const url = buildAnimeSamaUrl(candidate, saison);
     const html = await fetchText(url);
-    if (html && html.length > 1000) {
-      console.log(`[DEBUG] slug reconstruit valide: ${candidate}`);
-      return candidate;
-    }
-  } catch {
-    console.log(`[DEBUG] slug reconstruit invalide: ${candidate}`);
-  }
+    if (html && html.length > 1000) return candidate;
+  } catch { /* ignore */ }
 
   return existingSlug || candidate;
 }
 
+// MISE À JOUR : Supporte maintenant "saison 4-3 episode 12"
 function extractSeasonEpisode(text) {
   const normalized = normalizeTitle(text);
-  const match = normalized.match(/saison\s*(\d+)\s*episode\s*(\d+)/i);
-
+  const match = normalized.match(/saison\s*([\d-]+)\s*episode\s*(\d+)/i);
   if (!match) return null;
-
-  const saison = parseInt(match[1], 10);
-  const episode = parseInt(match[2], 10);
-
-  if (Number.isNaN(saison) || Number.isNaN(episode)) return null;
-
-  return { saison, episode };
+  return { saison: match[1], episode: parseInt(match[2], 10) };
 }
 
 function extractSlugFromHref(href) {
-  if (!href) return "";
-  const match = href.match(/\/catalogue\/([^/]+)\//i);
+  const match = (href || "").match(/\/catalogue\/([^/]+)\//i);
   return match ? match[1].trim() : "";
 }
 
 function extractVersionFromHref(href) {
-  const normalized = String(href || "").trim().toLowerCase();
-
-  if (normalized.endsWith("/vostfr/") || normalized.endsWith("/vostfr")) {
-    return "vostfr";
-  }
-
-  if (normalized.endsWith("/vf/") || normalized.endsWith("/vf")) {
-    return "vf";
-  }
-
+  const norm = String(href || "").trim().toLowerCase();
+  if (norm.endsWith("/vostfr/") || norm.endsWith("/vostfr")) return "vostfr";
+  if (norm.endsWith("/vf/") || norm.endsWith("/vf")) return "vf";
   return "";
 }
 
@@ -231,105 +175,45 @@ function extractRecentEpisodesFromHtml(html) {
   const $ = cheerio.load(html);
   const results = [];
   const seen = new Set();
-
   const links = $('a[href*="/catalogue/"]');
-  console.log(`[DEBUG] liens catalogue trouvés: ${links.length}`);
 
-  links.each((index, el) => {
+  links.each((_, el) => {
     const link = $(el);
     const href = (link.attr("href") || "").trim();
     const slug = extractSlugFromHref(href);
     const text = normalizeTitle(link.text());
     const version = extractVersionFromHref(href);
 
-    if (!slug) return;
-
-    const card = link.closest("div, article, li");
-
-    let languageTitle =
-      card.find('.language-badge-top img[title]').first().attr("title") ||
-      link.find('.language-badge-top img[title]').first().attr("title") ||
-      card.find('img[title="VOSTFR"], img[title="VF"]').first().attr("title") ||
-      link.find('img[title="VOSTFR"], img[title="VF"]').first().attr("title") ||
-      "";
-
-    languageTitle = String(languageTitle).trim().toUpperCase();
-
-    console.log(
-      `[DEBUG] lien ${index + 1}: slug="${slug}" href="${href}" text="${text}" langue="${languageTitle}" version="${version}"`
-    );
-
-    if (version !== "vostfr") {
-      console.log(`[DEBUG] ignoré car href != /vostfr/: ${href}`);
-      return;
-    }
+    if (!slug || version !== "vostfr") return;
 
     const parsed = extractSeasonEpisode(text);
-    if (!parsed) {
-      console.log(`[DEBUG] ignoré car saison/episode non trouvés: "${text}"`);
-      return;
-    }
+    if (!parsed) return;
 
     const key = `${slug}__${parsed.saison}__${version}`;
     if (seen.has(key)) return;
     seen.add(key);
 
-    results.push({
-      slug,
-      saison: parsed.saison,
-      episode: parsed.episode,
-      href,
-      text,
-      language: languageTitle,
-      version,
-    });
+    results.push({ ...parsed, slug, version });
   });
-
-  console.log(`[DEBUG] entrées récentes extraites: ${results.length}`);
-  results.forEach((item, i) => {
-    console.log(
-      `[DEBUG] récent ${i + 1}: slug=${item.slug}, saison=${item.saison}, episode=${item.episode}, version=${item.version}`
-    );
-  });
-
   return results;
 }
 
 async function getRecentEpisodesMap() {
-  const url = "https://anime-sama.to/";
-  console.log(`[DEBUG] récupération homepage Anime-Sama: ${url}`);
-
-  const html = await fetchText(url);
-  console.log(`[DEBUG] longueur homepage HTML: ${html.length}`);
-
+  const html = await fetchText("https://anime-sama.to/");
   const recentEntries = extractRecentEpisodesFromHtml(html);
   const map = new Map();
 
   for (const entry of recentEntries) {
     const key = `${entry.slug}__${entry.saison}__${entry.version}`;
     const current = map.get(key);
-
-    if (!current || entry.episode > current.episode) {
-      map.set(key, entry);
-    }
+    if (!current || entry.episode > current.episode) map.set(key, entry);
   }
-
-  console.log(`[DEBUG] taille map épisodes récents: ${map.size}`);
-
-  for (const [key, value] of map.entries()) {
-    console.log(`[DEBUG] map récent: ${key} -> episode ${value.episode}`);
-  }
-
   return map;
 }
 
 async function readSheetRows() {
   const range = `${SHEET_NAME}!A2:H`;
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SHEET_ID,
-    range,
-  });
-
+  const res = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range });
   return res.data.values || [];
 }
 
@@ -345,115 +229,68 @@ async function writeRow(rowIndex, rowValues) {
     spreadsheetId: SHEET_ID,
     range,
     valueInputOption: "USER_ENTERED",
-    requestBody: {
-      values: [rowValues],
-    },
+    requestBody: { values: [rowValues] },
   });
 }
 
 async function main() {
   console.log("=== SCRIPT START ===");
-  console.log("Reading sheet...");
   const rows = await readSheetRows();
-  console.log(`Found ${rows.length} anime rows.`);
-
   let recentEpisodesMap = new Map();
 
   try {
     recentEpisodesMap = await getRecentEpisodesMap();
-  } catch (error) {
-    console.warn(
-      `[DEBUG] erreur récupération récents Anime-Sama: ${error.message}`
-    );
+  } catch (e) {
+    console.warn("Erreur Anime-Sama récents:", e.message);
   }
 
   for (let i = 0; i < rows.length; i++) {
     const rowNumber = i + 2;
     const row = padRow(rows[i]);
-
     const titre = normalizeTitle(row[COL.TITRE]);
     if (!titre) continue;
 
-    const saisonCell = parseInt(row[COL.SAISON], 10);
-    const saison =
-      Number.isNaN(saisonCell) || saisonCell <= 0
-        ? inferSeasonFromTitle(titre)
-        : saisonCell;
+    // --- LOGIQUE SAISON ---
+    // On garde la valeur brute du Google Sheet (ex: "4-3" ou "2")
+    const saisonSheet = String(row[COL.SAISON] || "").trim();
+    // On l'utilise, ou on l'infère si c'est vide
+    const saisonCalcul = saisonSheet !== "" ? saisonSheet : inferSeasonFromTitle(titre);
 
-    const vus = row[COL.VUS];
-    const oldDispo = row[COL.DISPO];
-    const oldNbEpisode = row[COL.NB_EP];
-    const oldMalId = row[COL.ID_MAL];
-    const oldSlug = row[COL.SLUG];
-    const oldImage = row[COL.IMAGE];
+    console.log(`\n[${rowNumber}] ${titre} (Saison: ${saisonCalcul})`);
 
-    console.log(`\n[${rowNumber}] ${titre} (saison ${saison})`);
-
-    let malData = {
-      malId: oldMalId,
-      image: oldImage,
-      nbEpisode: oldNbEpisode,
-      saison,
-    };
-
+    let malData = { malId: row[COL.ID_MAL], image: row[COL.IMAGE], nbEpisode: row[COL.NB_EP] };
     try {
-      malData = await getMalData(titre);
-    } catch (error) {
-      console.warn(`  MAL error: ${error.message}`);
-    }
+      malData = await getMalData(titre, saisonCalcul);
+    } catch (e) { console.warn(" MAL error:", e.message); }
 
-    await sleep(1000);
+    await sleep(800);
 
-    let finalSlug = oldSlug;
+    let finalSlug = row[COL.SLUG];
     try {
-      finalSlug = await resolveAnimeSamaSlug(oldSlug, titre, saison);
-    } catch (error) {
-      console.warn(`  Anime-Sama slug error: ${error.message}`);
-    }
+      finalSlug = await resolveAnimeSamaSlug(row[COL.SLUG], titre, saisonCalcul);
+    } catch (e) { console.warn(" Slug error:", e.message); }
 
-    const preferredVersion = "vostfr";
-    const recentKey = `${finalSlug}__${saison}__${preferredVersion}`;
+    const recentKey = `${finalSlug}__${saisonCalcul}__vostfr`;
     const recentEntry = recentEpisodesMap.get(recentKey);
-
-    console.log(
-      `[DEBUG] recherche récent avec key="${recentKey}" -> ${
-        recentEntry ? `episode ${recentEntry.episode}` : "non trouvé"
-      }`
-    );
-
-    const newDispo =
-      recentEntry && recentEntry.episode ? recentEntry.episode : oldDispo;
+    const newDispo = recentEntry ? recentEntry.episode : row[COL.DISPO];
 
     const newRow = [...row];
-
     newRow[COL.TITRE] = titre;
-    newRow[COL.SAISON] = saison;
-    newRow[COL.VUS] = vus;
+    newRow[COL.SAISON] = row[COL.SAISON]; // STRICT : On ne modifie jamais la saison dans le Sheet
     newRow[COL.DISPO] = newDispo;
-    newRow[COL.NB_EP] =
-      malData.nbEpisode !== "" ? malData.nbEpisode : oldNbEpisode;
-    newRow[COL.ID_MAL] =
-      malData.malId !== "" ? malData.malId : oldMalId;
-    newRow[COL.SLUG] = finalSlug || oldSlug;
-    newRow[COL.IMAGE] = malData.image || oldImage;
+    newRow[COL.NB_EP] = malData.nbEpisode || row[COL.NB_EP];
+    newRow[COL.ID_MAL] = malData.malId || row[COL.ID_MAL];
+    newRow[COL.SLUG] = finalSlug || row[COL.SLUG];
+    newRow[COL.IMAGE] = malData.image || row[COL.IMAGE];
 
-    const changed = JSON.stringify(newRow) !== JSON.stringify(row);
-
-    if (!changed) {
+    if (JSON.stringify(newRow) !== JSON.stringify(row)) {
+      await writeRow(rowNumber, newRow);
+      console.log(`  Updated: Dispo ${row[COL.DISPO]} -> ${newDispo}`);
+    } else {
       console.log("  No change.");
-      continue;
     }
-
-    await writeRow(rowNumber, newRow);
-    console.log("  Updated.");
-    console.log(`  Dispo: ${oldDispo} -> ${newRow[COL.DISPO]}`);
-    console.log(`  nb_episode: ${oldNbEpisode} -> ${newRow[COL.NB_EP]}`);
-    console.log(`  ID_MAL: ${oldMalId} -> ${newRow[COL.ID_MAL]}`);
-    console.log(`  Slug: ${oldSlug} -> ${newRow[COL.SLUG]}`);
-
     await sleep(500);
   }
-
   console.log("\nDone.");
 }
 
