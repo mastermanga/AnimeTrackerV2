@@ -48,6 +48,12 @@ const COL = {
   IMAGE: 7,
 };
 
+/*
+|--------------------------------------------------------------------------
+| CONFIG RÉSEAU
+|--------------------------------------------------------------------------
+*/
+
 const RETRYABLE_STATUS = new Set([
   429,
   500,
@@ -66,6 +72,12 @@ const ANIME_SAMA_MIN_INTERVAL_MS = 400;
 let lastMalRequestAt = 0;
 let lastAnimeSamaRequestAt = 0;
 
+/*
+|--------------------------------------------------------------------------
+| UTILITAIRES
+|--------------------------------------------------------------------------
+*/
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -76,6 +88,18 @@ function normalizeTitle(title) {
     .trim();
 }
 
+/*
+ * La saison est entièrement manuelle dans le Google Sheet.
+ *
+ * Exemples acceptés :
+ *
+ * 3
+ * 2-4
+ * 1part1
+ * saison1part1
+ *
+ * "saison" est retiré automatiquement si tu l'écris.
+ */
 function normalizeAnimeSamaSeason(value) {
   return String(value || "")
     .trim()
@@ -95,7 +119,8 @@ function slugifyForAnimeSama(title) {
 }
 
 function buildAnimeSamaUrl(slug, saison) {
-  const cleanSeason = normalizeAnimeSamaSeason(saison);
+  const cleanSeason =
+    normalizeAnimeSamaSeason(saison);
 
   return (
     `https://anime-sama.to/catalogue/` +
@@ -174,6 +199,12 @@ function getRetryAfterMs(response) {
 
   return null;
 }
+
+/*
+|--------------------------------------------------------------------------
+| FETCH AVEC RETRY
+|--------------------------------------------------------------------------
+*/
 
 async function fetchWithRetry(
   url,
@@ -288,7 +319,7 @@ async function fetchMalJson(url) {
         "application/json",
 
       "User-Agent":
-        "anime-tracker-updater/4.0",
+        "anime-tracker-updater/4.1",
     },
   });
 }
@@ -464,17 +495,60 @@ async function getMalData(
 |--------------------------------------------------------------------------
 */
 
+/*
+ * Compte uniquement les vraies valeurs présentes
+ * dans les tableaux episodes.js.
+ *
+ * Important :
+ *
+ * [""]             => 0 épisode
+ * ["   "]          => 0 épisode
+ * ["null"]         => 0 épisode
+ * ["https://..."]  => 1 épisode
+ */
 function countArrayItems(arrayBody) {
   const quotedItems =
     arrayBody.match(
       /'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|`(?:\\.|[^`\\])*`/g
-    );
+    ) || [];
 
   return quotedItems
-    ? quotedItems.length
-    : 0;
+    .map((item) => {
+      return item
+        .slice(1, -1)
+        .trim();
+    })
+    .filter((value) => {
+      if (!value) {
+        return false;
+      }
+
+      const lower =
+        value.toLowerCase();
+
+      if (
+        lower === "null" ||
+        lower === "undefined" ||
+        lower === "#" ||
+        lower === "about:blank"
+      ) {
+        return false;
+      }
+
+      return true;
+    })
+    .length;
 }
 
+/*
+ * Cherche les tableaux :
+ *
+ * var eps1 = [...]
+ * let eps1 = [...]
+ * const eps1 = [...]
+ *
+ * et garde le plus grand nombre de vrais épisodes.
+ */
 function extractEpisodeCountFromEpisodesJs(
   jsText
 ) {
@@ -500,6 +574,9 @@ function extractEpisodeCountFromEpisodesJs(
   return maxEpisodes;
 }
 
+/*
+ * Fallback si episodes.js n'est pas trouvé.
+ */
 function extractEpisodeCountFromPage(
   html
 ) {
@@ -549,6 +626,17 @@ function extractEpisodeCountFromPage(
   return maxEpisode;
 }
 
+/*
+ * Vérifie directement la page de la saison.
+ *
+ * Exemple :
+ *
+ * /catalogue/re-zero/saison4/vostfr/
+ *
+ * puis récupère episodes.js.
+ *
+ * episodes.js est prioritaire sur le HTML.
+ */
 async function getAnimeSamaAvailableEpisodes(
   slug,
   saison
@@ -582,11 +670,6 @@ async function getAnimeSamaAvailableEpisodes(
   const $ =
     cheerio.load(html);
 
-  let detected =
-    extractEpisodeCountFromPage(
-      html
-    );
-
   const scriptSrc =
     $("script[src]")
       .map(
@@ -599,6 +682,10 @@ async function getAnimeSamaAvailableEpisodes(
           /episodes\.js/i.test(src)
       );
 
+  /*
+   * Si episodes.js existe,
+   * on utilise uniquement celui-ci.
+   */
   if (scriptSrc) {
     const jsUrl =
       new URL(
@@ -612,27 +699,27 @@ async function getAnimeSamaAvailableEpisodes(
         pageUrl
       );
 
-    detected =
-      Math.max(
-        detected,
-        extractEpisodeCountFromEpisodesJs(
-          jsText
-        )
+    const episodeCount =
+      extractEpisodeCountFromEpisodesJs(
+        jsText
       );
+
+    return episodeCount;
   }
 
-  if (
-    !scriptSrc &&
-    detected === 0
-  ) {
-    throw new Error(
-      `episodes.js introuvable sur ${pageUrl}`
-    );
-  }
-
-  return detected;
+  /*
+   * Sinon fallback HTML.
+   */
+  return extractEpisodeCountFromPage(
+    html
+  );
 }
 
+/*
+ * Si tous les épisodes connus sur MAL
+ * sont déjà disponibles, inutile de continuer
+ * à vérifier Anime-Sama.
+ */
 function shouldSkipAnimeSama(row) {
   const dispo =
     Number.parseInt(
@@ -760,13 +847,7 @@ async function main() {
     }
 
     /*
-     * SAISON 100 % MANUELLE
-     *
-     * Exemples :
-     * 3
-     * 2-4
-     * 1part1
-     * saison1part1
+     * SAISON MANUELLE
      */
     const saison =
       normalizeAnimeSamaSeason(
@@ -774,8 +855,7 @@ async function main() {
       );
 
     /*
-     * Le slug du Sheet reste prioritaire.
-     * Si vide, on tente d'en générer un.
+     * Slug du Sheet prioritaire.
      */
     const finalSlug =
       String(
@@ -797,8 +877,7 @@ async function main() {
       titre;
 
     /*
-     * IMPORTANT :
-     * la saison n'est jamais changée
+     * La saison n'est jamais changée
      * automatiquement.
      */
     newRow[COL.SAISON] =
@@ -808,9 +887,11 @@ async function main() {
       finalSlug;
 
     /*
-     * MAL
-     * Seulement lorsque RUN_MAL=true.
-     */
+    |--------------------------------------------------------------------------
+    | MAL
+    |--------------------------------------------------------------------------
+    */
+
     if (RUN_MAL) {
       try {
         const malData =
@@ -840,8 +921,11 @@ async function main() {
     }
 
     /*
-     * ANIME-SAMA
-     */
+    |--------------------------------------------------------------------------
+    | ANIME-SAMA
+    |--------------------------------------------------------------------------
+    */
+
     if (!saison) {
       console.warn(
         "  Anime-Sama ignoré : colonne Saison vide."
@@ -875,7 +959,8 @@ async function main() {
         ) {
           /*
            * Sécurité :
-           * DISPO ne descend jamais.
+           *
+           * Dispo ne peut jamais diminuer automatiquement.
            */
           const newDispo =
             Math.max(
@@ -887,7 +972,7 @@ async function main() {
             newDispo;
 
           console.log(
-            `  Anime-Sama : ${detected} épisode(s) détecté(s).`
+            `  Anime-Sama : ${detected} épisode(s) réel(s) détecté(s).`
           );
         }
       } catch (error) {
@@ -898,8 +983,11 @@ async function main() {
     }
 
     /*
-     * Écriture uniquement si changement.
-     */
+    |--------------------------------------------------------------------------
+    | ÉCRITURE SHEET
+    |--------------------------------------------------------------------------
+    */
+
     if (
       JSON.stringify(newRow) !==
       JSON.stringify(row)
