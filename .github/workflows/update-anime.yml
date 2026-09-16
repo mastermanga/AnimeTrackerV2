@@ -4,7 +4,12 @@ on:
   workflow_dispatch:
 
   schedule:
+    # Anime-Sama : toutes les 30 minutes
     - cron: "17,47 5-20 * * *"
+      timezone: "Europe/Paris"
+
+    # MAL : une fois par jour
+    - cron: "7 5 * * *"
       timezone: "Europe/Paris"
 
 concurrency:
@@ -20,6 +25,8 @@ jobs:
       SHEET_NAME: Anime
       GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.AnimeTrackerSecretAccountJsonGoogleService }}
       MAL_CLIENT_ID: ${{ secrets.MAL_CLIENT_ID }}
+
+      RUN_MAL: ${{ github.event_name == 'workflow_dispatch' || github.event.schedule == '7 5 * * *' }}
 
     steps:
       - name: Checkout repository
