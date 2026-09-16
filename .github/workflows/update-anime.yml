@@ -4,7 +4,8 @@ on:
   workflow_dispatch:
 
   schedule:
-    - cron: "*/10 5-20 * * *"
+    - cron: "17,47 5-20 * * *"
+      timezone: "Europe/Paris"
 
 concurrency:
   group: anime-update
