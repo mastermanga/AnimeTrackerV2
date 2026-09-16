@@ -10,9 +10,18 @@ const SHEET_NAME = process.env.SHEET_NAME || "Anime";
 const GOOGLE_SERVICE_ACCOUNT_JSON =
   process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
 
+const MAL_CLIENT_ID =
+  process.env.MAL_CLIENT_ID;
+
 if (!GOOGLE_SERVICE_ACCOUNT_JSON) {
   throw new Error(
     "Missing GOOGLE_SERVICE_ACCOUNT_JSON environment variable."
+  );
+}
+
+if (!MAL_CLIENT_ID) {
+  throw new Error(
+    "Missing MAL_CLIENT_ID environment variable."
   );
 }
 
@@ -51,19 +60,18 @@ const RETRYABLE_STATUS = new Set([
   504,
 ]);
 
-// Nombre total de tentatives, première tentative comprise.
 const MAX_RETRIES = 4;
 
-// 2s -> 4s -> 8s entre les tentatives.
 const RETRY_BASE_DELAY_MS = 2000;
 
-// Timeout maximum d'un appel HTTP.
 const REQUEST_TIMEOUT_MS = 20000;
 
-// On espace les appels à Jikan.
-const JIKAN_MIN_INTERVAL_MS = 1300;
+/*
+ * Petit délai entre les appels MAL.
+ */
+const MAL_MIN_INTERVAL_MS = 500;
 
-let lastJikanRequestAt = 0;
+let lastMalRequestAt = 0;
 
 /*
 |--------------------------------------------------------------------------
@@ -81,22 +89,28 @@ function normalizeTitle(title) {
     .trim();
 }
 
-function isJikanUrl(url) {
-  return String(url).startsWith("https://api.jikan.moe/");
+function isMalUrl(url) {
+  return String(url).startsWith(
+    "https://api.myanimelist.net/"
+  );
 }
 
-async function waitForJikanSlot() {
-  const elapsed = Date.now() - lastJikanRequestAt;
+async function waitForMalSlot() {
+  const elapsed =
+    Date.now() - lastMalRequestAt;
 
-  if (elapsed < JIKAN_MIN_INTERVAL_MS) {
-    await sleep(JIKAN_MIN_INTERVAL_MS - elapsed);
+  if (elapsed < MAL_MIN_INTERVAL_MS) {
+    await sleep(
+      MAL_MIN_INTERVAL_MS - elapsed
+    );
   }
 
-  lastJikanRequestAt = Date.now();
+  lastMalRequestAt = Date.now();
 }
 
 function getRetryAfterMs(response) {
-  const retryAfter = response.headers.get("retry-after");
+  const retryAfter =
+    response.headers.get("retry-after");
 
   if (!retryAfter) {
     return null;
@@ -105,13 +119,20 @@ function getRetryAfterMs(response) {
   const seconds = Number(retryAfter);
 
   if (Number.isFinite(seconds)) {
-    return Math.max(0, seconds * 1000);
+    return Math.max(
+      0,
+      seconds * 1000
+    );
   }
 
-  const date = Date.parse(retryAfter);
+  const date =
+    Date.parse(retryAfter);
 
   if (Number.isFinite(date)) {
-    return Math.max(0, date - Date.now());
+    return Math.max(
+      0,
+      date - Date.now()
+    );
   }
 
   return null;
@@ -119,7 +140,7 @@ function getRetryAfterMs(response) {
 
 /*
 |--------------------------------------------------------------------------
-| FETCH AVEC RETRY AUTOMATIQUE
+| FETCH AVEC RETRY
 |--------------------------------------------------------------------------
 */
 
@@ -132,16 +153,22 @@ async function fetchWithRetry(
     timeoutMs = REQUEST_TIMEOUT_MS,
   } = {}
 ) {
-  for (let attempt = 1; attempt <= retries; attempt++) {
-    if (isJikanUrl(url)) {
-      await waitForJikanSlot();
+  for (
+    let attempt = 1;
+    attempt <= retries;
+    attempt++
+  ) {
+    if (isMalUrl(url)) {
+      await waitForMalSlot();
     }
 
-    const controller = new AbortController();
+    const controller =
+      new AbortController();
 
-    const timeout = setTimeout(() => {
-      controller.abort();
-    }, timeoutMs);
+    const timeout =
+      setTimeout(() => {
+        controller.abort();
+      }, timeoutMs);
 
     let response;
 
@@ -164,7 +191,7 @@ async function fetchWithRetry(
         Math.pow(2, attempt - 1);
 
       console.warn(
-        `  HTTP network error - tentative ${attempt}/${retries}. ` +
+        `  Erreur réseau - tentative ${attempt}/${retries}. ` +
         `Nouvelle tentative dans ${delay / 1000}s...`
       );
 
@@ -182,11 +209,12 @@ async function fetchWithRetry(
       return response.json();
     }
 
-    const status = response.status;
+    const status =
+      response.status;
 
     /*
-     * Erreur non temporaire :
-     * 400, 401, 403, 404...
+     * 400 / 401 / 403 / 404...
+     * => pas de retry automatique.
      */
     if (!RETRYABLE_STATUS.has(status)) {
       throw new Error(
@@ -194,9 +222,6 @@ async function fetchWithRetry(
       );
     }
 
-    /*
-     * Dernière tentative échouée.
-     */
     if (attempt >= retries) {
       throw new Error(
         `HTTP ${status} after ${attempt} attempts on ${url}`
@@ -211,7 +236,8 @@ async function fetchWithRetry(
       Math.pow(2, attempt - 1);
 
     const delay =
-      retryAfterMs ?? exponentialDelay;
+      retryAfterMs ??
+      exponentialDelay;
 
     console.warn(
       `  HTTP ${status} - tentative ${attempt}/${retries}. ` +
@@ -226,23 +252,38 @@ async function fetchWithRetry(
   );
 }
 
-async function fetchJson(url) {
+/*
+|--------------------------------------------------------------------------
+| API MYANIMELIST OFFICIELLE
+|--------------------------------------------------------------------------
+*/
+
+async function fetchMalJson(url) {
   return fetchWithRetry(url, {
     responseType: "json",
     headers: {
+      "X-MAL-CLIENT-ID":
+        MAL_CLIENT_ID,
+      Accept:
+        "application/json",
       "User-Agent":
-        "anime-tracker-updater/2.0",
-      Accept: "application/json",
+        "anime-tracker-updater/3.0",
     },
   });
 }
+
+/*
+|--------------------------------------------------------------------------
+| ANIME-SAMA FETCH
+|--------------------------------------------------------------------------
+*/
 
 async function fetchText(url) {
   return fetchWithRetry(url, {
     responseType: "text",
     headers: {
       "User-Agent":
-        "Mozilla/5.0 anime-tracker-updater/2.0",
+        "Mozilla/5.0 anime-tracker-updater/3.0",
     },
   });
 }
@@ -253,9 +294,9 @@ async function fetchText(url) {
 |--------------------------------------------------------------------------
 */
 
-// Supporte "4-3", "2-1", etc.
 function inferSeasonFromTitle(title) {
-  const t = normalizeTitle(title);
+  const t =
+    normalizeTitle(title);
 
   const patterns = [
     /(?:^|\s)saison\s*([\d-]+)/i,
@@ -265,7 +306,8 @@ function inferSeasonFromTitle(title) {
   ];
 
   for (const pattern of patterns) {
-    const match = t.match(pattern);
+    const match =
+      t.match(pattern);
 
     if (match) {
       return match[1];
@@ -305,11 +347,20 @@ function stripSeasonFromTitle(title) {
 function slugifyForAnimeSama(title) {
   return stripSeasonFromTitle(title)
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
+    .replace(
+      /[\u0300-\u036f]/g,
+      ""
+    )
     .toLowerCase()
     .replace(/['’]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
+    .replace(
+      /[^a-z0-9]+/g,
+      "-"
+    )
+    .replace(
+      /^-+|-+$/g,
+      ""
+    );
 }
 
 function buildAnimeSamaUrl(
@@ -324,65 +375,89 @@ function buildAnimeSamaUrl(
 
 /*
 |--------------------------------------------------------------------------
-| JIKAN / MAL
+| MAL
 |--------------------------------------------------------------------------
 */
 
+const MAL_FIELDS = [
+  "id",
+  "title",
+  "main_picture",
+  "alternative_titles",
+  "num_episodes",
+  "status",
+].join(",");
+
+/*
+ * Récupération directe grâce à l'ID MAL
+ * présent dans le Google Sheet.
+ */
 async function getMalById(malId) {
-  const id = String(malId || "").trim();
+  const id =
+    String(malId || "").trim();
 
   if (!id) {
     return null;
   }
 
   const url =
-    `https://api.jikan.moe/v4/anime/` +
-    encodeURIComponent(id);
+    `https://api.myanimelist.net/v2/anime/` +
+    `${encodeURIComponent(id)}` +
+    `?fields=${encodeURIComponent(MAL_FIELDS)}`;
 
-  const json = await fetchJson(url);
-
-  return json?.data || null;
+  return fetchMalJson(url);
 }
 
+/*
+ * Recherche MAL uniquement si aucun ID
+ * exploitable n'est disponible.
+ */
 async function searchMalByTitle(title) {
-  const q =
-    encodeURIComponent(title);
-
   const url =
-    `https://api.jikan.moe/v4/anime` +
-    `?q=${q}&limit=5`;
+    `https://api.myanimelist.net/v2/anime` +
+    `?q=${encodeURIComponent(title)}` +
+    `&limit=5` +
+    `&fields=${encodeURIComponent(MAL_FIELDS)}`;
 
   const json =
-    await fetchJson(url);
+    await fetchMalJson(url);
 
   const list =
     Array.isArray(json.data)
       ? json.data
+          .map((item) => item.node)
+          .filter(Boolean)
       : [];
 
   if (!list.length) {
     return null;
   }
 
-  const normalizedRequestedTitle =
-    normalizeTitle(title).toLowerCase();
+  const requested =
+    normalizeTitle(title)
+      .toLowerCase();
 
-  const exact = list.find((item) => {
-    const candidates = [
-      item.title,
-      item.title_english,
-      ...(item.title_synonyms || []),
-    ]
-      .filter(Boolean)
-      .map((candidate) =>
-        normalizeTitle(candidate)
-          .toLowerCase()
+  const exact =
+    list.find((anime) => {
+      const alternatives =
+        anime.alternative_titles || {};
+
+      const candidates = [
+        anime.title,
+        alternatives.en,
+        alternatives.ja,
+        ...(alternatives.synonyms || []),
+      ]
+        .filter(Boolean)
+        .map((candidate) =>
+          normalizeTitle(candidate)
+            .toLowerCase()
+        );
+
+      return candidates.includes(
+        requested
       );
-
-    return candidates.includes(
-      normalizedRequestedTitle
-    );
-  });
+    });
 
   return exact || list[0];
 }
@@ -396,14 +471,17 @@ async function getMalData(
     normalizeTitle(rowTitle);
 
   const baseTitle =
-    stripSeasonFromTitle(fullTitle);
+    stripSeasonFromTitle(
+      fullTitle
+    );
 
   let anime = null;
 
   /*
-   * PRIORITÉ 1 :
-   * Si on connaît déjà l'ID MAL,
-   * on évite une recherche texte.
+   * PRIORITÉ 1
+   *
+   * L'ID MAL existe déjà dans le Sheet.
+   * On récupère directement la fiche.
    */
   if (existingMalId) {
     try {
@@ -429,19 +507,30 @@ async function getMalData(
   }
 
   /*
-   * PRIORITÉ 2 :
-   * Recherche avec le titre complet.
+   * PRIORITÉ 2
+   *
+   * Recherche titre complet.
    */
   if (!anime) {
     anime =
       await searchMalByTitle(
         fullTitle
       );
+
+    if (anime) {
+      console.log(
+        `  MAL trouvé par titre : ${anime.title} (ID ${anime.id})`
+      );
+    }
   }
 
   /*
-   * PRIORITÉ 3 :
-   * Recherche sans "Season X".
+   * PRIORITÉ 3
+   *
+   * Exemple :
+   * "Re:Zero Season 4"
+   * devient éventuellement
+   * "Re:Zero"
    */
   if (
     !anime &&
@@ -451,6 +540,12 @@ async function getMalData(
       await searchMalByTitle(
         baseTitle
       );
+
+    if (anime) {
+      console.log(
+        `  MAL trouvé via titre alternatif : ${anime.title} (ID ${anime.id})`
+      );
+    }
   }
 
   if (!anime) {
@@ -462,22 +557,35 @@ async function getMalData(
     };
   }
 
+  /*
+   * MAL peut retourner 0 pour une série
+   * pas encore diffusée / nombre inconnu.
+   * Dans ce cas on laisse vide.
+   */
+  const nbEpisode =
+    Number(anime.num_episodes) > 0
+      ? anime.num_episodes
+      : "";
+
+  const image =
+    anime.main_picture?.large ||
+    anime.main_picture?.medium ||
+    "";
+
   return {
     malId:
-      anime.mal_id ?? "",
+      anime.id ?? "",
 
-    image:
-      anime.images?.jpg?.image_url ??
-      "",
+    image,
 
-    nbEpisode:
-      anime.episodes ?? "",
+    nbEpisode,
 
     saison:
       forcedSaison,
 
     malTitle:
-      anime.title ?? fullTitle,
+      anime.title ??
+      fullTitle,
   };
 }
 
@@ -492,6 +600,10 @@ async function resolveAnimeSamaSlug(
   title,
   saison
 ) {
+  /*
+   * Si le slug du Sheet fonctionne,
+   * on le garde.
+   */
   if (existingSlug) {
     try {
       const url =
@@ -510,12 +622,17 @@ async function resolveAnimeSamaSlug(
         return existingSlug;
       }
     } catch {
-      // ignore
+      // Ignore
     }
   }
 
+  /*
+   * Sinon on tente un slug automatique.
+   */
   const candidate =
-    slugifyForAnimeSama(title);
+    slugifyForAnimeSama(
+      title
+    );
 
   try {
     const url =
@@ -534,9 +651,14 @@ async function resolveAnimeSamaSlug(
       return candidate;
     }
   } catch {
-    // ignore
+    // Ignore
   }
 
+  /*
+   * Si Anime-Sama n'a pas encore
+   * la série, on conserve quand même
+   * le slug existant / candidat.
+   */
   return (
     existingSlug ||
     candidate
@@ -549,7 +671,6 @@ async function resolveAnimeSamaSlug(
 |--------------------------------------------------------------------------
 */
 
-// Supporte "saison 4-3 episode 12"
 function extractSeasonEpisode(text) {
   const normalized =
     normalizeTitle(text);
@@ -564,11 +685,14 @@ function extractSeasonEpisode(text) {
   }
 
   return {
-    saison: match[1],
-    episode: parseInt(
-      match[2],
-      10
-    ),
+    saison:
+      match[1],
+
+    episode:
+      parseInt(
+        match[2],
+        10
+      ),
   };
 }
 
@@ -736,6 +860,7 @@ async function readSheetRows() {
     await sheets.spreadsheets.values.get({
       spreadsheetId:
         SHEET_ID,
+
       range,
     });
 
@@ -800,6 +925,10 @@ async function main() {
     `${rows.length} anime(s) à vérifier.`
   );
 
+  /*
+   * Récupération des épisodes
+   * récents Anime-Sama.
+   */
   let recentEpisodesMap =
     new Map();
 
@@ -817,6 +946,9 @@ async function main() {
     );
   }
 
+  /*
+   * Parcours du Sheet.
+   */
   for (
     let i = 0;
     i < rows.length;
@@ -839,6 +971,14 @@ async function main() {
 
     /*
      * SAISON
+     *
+     * On garde exactement la valeur
+     * du Sheet :
+     *
+     * 4
+     * 2
+     * 2-4
+     * etc.
      */
     const saisonSheet =
       String(
@@ -858,7 +998,7 @@ async function main() {
     );
 
     /*
-     * MAL / JIKAN
+     * MAL
      */
     let malData = {
       malId:
@@ -880,18 +1020,18 @@ async function main() {
         );
     } catch (error) {
       console.warn(
-        "  Jikan/MAL error:",
+        "  MAL error:",
         error.message
       );
     }
 
     /*
-     * Petit délai de sécurité.
+     * Petit délai.
      */
-    await sleep(500);
+    await sleep(300);
 
     /*
-     * ANIME-SAMA SLUG
+     * SLUG ANIME-SAMA
      */
     let finalSlug =
       row[COL.SLUG];
@@ -923,6 +1063,15 @@ async function main() {
         recentKey
       );
 
+    /*
+     * IMPORTANT :
+     *
+     * Si l'anime n'est pas encore
+     * sur Anime-Sama, on conserve
+     * la valeur du Sheet.
+     *
+     * Donc 0 reste 0.
+     */
     const newDispo =
       recentEntry
         ? recentEntry.episode
@@ -938,9 +1087,8 @@ async function main() {
       titre;
 
     /*
-     * IMPORTANT :
-     * la saison du Sheet
-     * n'est jamais modifiée.
+     * On ne modifie jamais
+     * automatiquement la saison.
      */
     newRow[COL.SAISON] =
       row[COL.SAISON];
@@ -948,25 +1096,39 @@ async function main() {
     newRow[COL.DISPO] =
       newDispo;
 
+    /*
+     * Si MAL ne connaît pas encore
+     * le nombre d'épisodes,
+     * on conserve l'ancienne valeur.
+     */
     newRow[COL.NB_EP] =
       malData.nbEpisode ||
       row[COL.NB_EP];
 
+    /*
+     * ID MAL
+     */
     newRow[COL.ID_MAL] =
       malData.malId ||
       row[COL.ID_MAL];
 
+    /*
+     * Anime-Sama slug
+     */
     newRow[COL.SLUG] =
       finalSlug ||
       row[COL.SLUG];
 
+    /*
+     * Image MAL
+     */
     newRow[COL.IMAGE] =
       malData.image ||
       row[COL.IMAGE];
 
     /*
-     * ÉCRITURE SEULEMENT
-     * SI QUELQUE CHOSE CHANGE
+     * On écrit uniquement
+     * si quelque chose change.
      */
     if (
       JSON.stringify(newRow) !==
@@ -986,7 +1148,7 @@ async function main() {
       );
     }
 
-    await sleep(500);
+    await sleep(300);
   }
 
   console.log(
